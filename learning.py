@@ -5,23 +5,20 @@ import csv
 from nn import neural_net, LossHistory
 import os.path
 import timeit
-import time
-# import keyboard
-# from tensorflow.python.framework import ops
-# ops.reset_default_graph()
+import keyboard
 
-NUM_INPUT = 2#?
+NUM_INPUT = 18
 GAMMA = 0.9  # Forgetting.
 TUNING = False  # If False, just use arbitrary, pre-selected params.
-learning_rate = 0.45
 
 
 def train_net(model, params):
 
     filename = params_to_filename(params)
-    observe = 129  # Number of frames to observe before training.
-    epsilon = 0.5
-    train_frames = 50000 # Number of frames to play.
+
+    observe = 1000  # Number of frames to observe before training.
+    epsilon = 1
+    train_frames = 110000 # Number of frames to play.
     steps = 0
     batchSize = params['batchSize']
     buffer = params['buffer']
@@ -31,7 +28,7 @@ def train_net(model, params):
     car_distance = 0
     t = 0
     data_collect = []
-    replay = []  # stores tuples of (S, A, R, S'). #to be displayed 
+    replay = []  # stores tuples of (S, A, R, S').
 
     loss_log = []
 
@@ -39,37 +36,31 @@ def train_net(model, params):
     game_state = carmunk.GameState()
 
     # Get initial state by doing nothing and getting the state.
-    _, state, _ = game_state.frame_step((2))
+    _, state = game_state.frame_step((1))
 
     # Let's time it.
     start_time = timeit.default_timer()
 
     # Run the frames.
-    
     while t < train_frames:
-        print(t)
+
         t += 1
         car_distance += 1
 
         # Choose an action.
         if random.random() < epsilon or t < observe:
-            action = np.random.randint(0, 5)  # random
+            action = np.random.randint(3)  # random
         else:
             # Get Q values for each action.
-            print("PREDICTED", state)
-            # time.sleep(1)
-            x = state[0]
-            y = state[1]
-            qval = model.predict(np.array([x,y]).reshape((1,2)), batch_size=1)
+            qval = model.predict(state, batch_size=1)
             action = (np.argmax(qval))  # best
-            
 
         # Take action, observe new state and get our treat.
-        reward, new_state, term = game_state.frame_step(action)
-        print("timestep :"+str (t)+"Reward"+str( reward)+ "action"+ str(action)+"state"+str(state))
+        reward, new_state = game_state.frame_step(action)
+
         # Experience replay storage.
         replay.append((state, action, reward, new_state))
-        # print(len(replay))
+
         # If we're done observing, start training.
         if t > observe:
             #print("start")
@@ -82,38 +73,38 @@ def train_net(model, params):
 
             # Get training values.
             X_train, y_train = process_minibatch2(minibatch, model)
+
             # Train the model on this batch.
             history = LossHistory()
             model.fit(
                 X_train, y_train, batch_size=batchSize,
-                 verbose=0, callbacks=[history]
+                nb_epoch=1, verbose=0, callbacks=[history]
             )
             loss_log.append(history.losses)
             steps += 1
             if steps % 1000 == 0:
-                print("Step = " + str(steps), "Epsilon = "+str(epsilon))
+                print("Step = " + str(steps),"Epsilon = "+str(epsilon))
         # Update the starting state with S'.
         state = new_state
 
         # Decrement epsilon over time.
         if epsilon > 0.1 and t > observe:
-            epsilon -= (10.0/train_frames)
-            print("EPSILON UPDATED", epsilon)
+            epsilon -= (1.0/train_frames)
 
         # We died, so update stuff.
-        if term == 1:
-            # print("Crashed.")
+        if reward <= -500:
+            #print("Crashed.")
             # Log the car's distance at this T.
             data_collect.append([t, car_distance])
-            continue
+        
             # Reset.
             car_distance = 0
         # We reached the goal, so update stuff.
-        elif term == 2:
-            print("Reached goal.", car_distance)
+        elif reward >= 2000:
+            print("Reached goal.")
             # Log the car's distance at this T.
             data_collect.append([t, car_distance])
-            continue
+
             # Reset.
             car_distance = 0
 
@@ -123,10 +114,14 @@ def train_net(model, params):
                                str(t) + '.h5',
                                overwrite=True)
             print("Saving model %s - %d" % (filename, t))
+
         # if(keyboard.is_pressed('8')):
         #     print("Reset Goal")
         #     game_state.reset_goal()
-        print(t, reward, action)
+
+
+    # Log results after we're done all frames.
+    #log_results(filename, data_collect, loss_log)
 
 
 def log_results(filename, data_collect, loss_log):
@@ -151,45 +146,31 @@ def process_minibatch2(minibatch, model):
     mb_len = len(minibatch)
 
     old_states = np.zeros(shape=(mb_len, NUM_INPUT))
-    actions = np.zeros(shape=(mb_len))
-    rewards = np.zeros(shape=(mb_len))
+    actions = np.zeros(shape=(mb_len,))
+    rewards = np.zeros(shape=(mb_len,))
     new_states = np.zeros(shape=(mb_len, NUM_INPUT))
 
     for i, m in enumerate(minibatch):
         old_state_m, action_m, reward_m, new_state_m = m
-        old_states[i, :] = old_state_m[:]
+        old_states[i, :] = old_state_m[...]
         actions[i] = action_m
         rewards[i] = reward_m
-        new_states[i, :] = new_state_m[:]
+        new_states[i, :] = new_state_m[...]
 
     old_qvals = model.predict(old_states, batch_size=mb_len)
     new_qvals = model.predict(new_states, batch_size=mb_len)
-    old_qvals_max = []
-    new_qvals_max = []
-    # print(old_qvals)
-    # for list_e in old_qvals:
-    #     old_qvals_max.append(max(list_e))
-    # for list_e in new_qvals:
-    #     new_qvals_max.append(max(list_e)) 
- 
-    maxQs = np.maximum(new_qvals, old_qvals)
-    # print(maxQs[1])
-    # print(new_qvals[1])
-    # print(old_qvals[1])
-    # y = old_qvals
-    # non_term_inds = np.where(rewards != 300)[0]
-    # term_inds = np.where(rewards == 300)[0]
-    for i in range(mb_len):
-        action = int(actions[i])
-        new_qvals[i][action] = old_qvals[i][action] + learning_rate * (rewards[i] + (GAMMA * maxQs[i][action]) - old_qvals[i][action])
+
+    maxQs = np.max(new_qvals, axis=1)
+    y = old_qvals
+    non_term_inds = np.where(rewards != 300)[0]
+    term_inds = np.where(rewards == 300)[0]
+
+    y[non_term_inds, actions[non_term_inds].astype(int)] = rewards[non_term_inds] + (GAMMA * maxQs[non_term_inds])
+    y[term_inds, actions[term_inds].astype(int)] = rewards[term_inds]
 
     X_train = old_states
-    y_train = new_qvals
-
-    # y_train=(y_train.reshape(5))
-    # print(old_qvals)
+    y_train = y
     return X_train, y_train
-
 
 def params_to_filename(params):
     return str(params['nn'][0]) + '-' + str(params['nn'][1]) + '-' + \
@@ -234,9 +215,9 @@ if __name__ == "__main__":
             launch_learn(param_set)
 
     else:
-        nn_param = [128, 128, 128]
+        nn_param = [128, 128,128]
         params = {
-            "batchSize": 127,
+            "batchSize": 64,
             "buffer": 50000,
             "nn": nn_param
         }

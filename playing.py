@@ -15,7 +15,7 @@ def play(model):
     game_state = carmunk.GameState()
 
     # Do nothing to get initial.
-    _, state = game_state.frame_step((2))
+    _, state = game_state.frame_step((1))
 
     # Move.
     while True:
@@ -26,8 +26,8 @@ def play(model):
 
         # Take action.
         
-        if random.random() < 0.4:
-            action = np.random.randint(0, 3)  # random
+        if random.random() < 0.099:
+            action = np.random.randint(3)  # random
         else:
             # Get Q values for each action.
             qval = model.predict(state, batch_size=1)
